@@ -11,7 +11,8 @@ class RNNModel(nn.Module):
         n_hidden,
         n_layers,
         dropout=0.5,
-        rnn_type="elman",  # can be elman, lstm, gru
+        rnn_type="gru",
+        bidirectional = True,  # can be elman, lstm, gru
     ):
         super(RNNModel, self).__init__()
 
@@ -22,12 +23,32 @@ class RNNModel(nn.Module):
                 n_layers,
                 nonlinearity="tanh",
                 dropout=dropout,
+                bidirectional = False
+            )
+        # TODO: implement lstm and gru
+        elif rnn_type == "lstm":
+            self.rnn = nn.LSTM(
+                in_embedding_dim,
+                n_hidden,
+                n_layers,
+                dropout=dropout,
+                bidirectional = True
+            )
+
+        elif rnn_type == "gru":
+            self.rnn = nn.GRU(
+                in_embedding_dim,
+                n_hidden,
+                n_layers,
+                dropout=dropout,
+                bidirectional = True
             )
         else:
-            # TODO: implement lstm and gru
-            # self.rnn = ...
-            raise NotImplementedError
-        
+            raise ValueError("rnn_type must be one of elman, lstm, gru")
+            
+        self.rnn_type = rnn_type
+        self.bidirectional = bidirectional
+        self.n_dir = 2 if bidirectional else 1
         self.in_embedder = nn.Embedding(vocab_size, in_embedding_dim)
         self.dropout = nn.Dropout(dropout)
         self.pooling = nn.Linear(n_hidden, vocab_size)
@@ -59,4 +80,5 @@ class RNNModel(nn.Module):
         with open(path, "rb") as f:
             model = torch.load(f)
             model.rnn.flatten_parameters()
+            model.in_embedder.weight.requires_grad = True
             return model

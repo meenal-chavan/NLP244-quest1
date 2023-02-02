@@ -6,19 +6,26 @@ import torch.nn as nn
 import torch.onnx
 
 import data
-from utils import get_device, repackage_hidden
+from utils import get_device, repackage_hidden, make_reproducible
 from rnnlm import RNNModel
 
+def load_glove(path):
+    with open(path) as f:
+        glove = {l.split()[0]: torch.FloatTensor([float(x) for x in l.split()[1:]]) for l in f}
+    return glove
 
-def init_glove_embeddings(model: RNNModel, glove_path):
-    # TODO: implement this function
-    raise NotImplementedError
+# init glove embeddings for the model
+def init_glove_embeddings(model:RNNModel, glove):
+    vocab = model.vocab
+    embedding = model.encoder.weight
+    for i, word in enumerate(vocab.itos):
+        if word in glove:
+            embedding[i] = glove[word]
+    return model
 
-
+# compute perplexity
 def compute_perplexity(loss: float):
-    # TODO: implement this function
-    raise NotImplementedError
-
+    return math.exp(loss)
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -33,9 +40,15 @@ def parse_args():
         "--emsize", type=int, default=50, help="size of word embeddings"
     )
     parser.add_argument(
+        "--rnn-type",
+        type=str,
+        default="lstm",
+        help="type of recurrent net (elman, lstm, gru)",
+    )
+    parser.add_argument(
         "--nhid", type=int, default=200, help="number of hidden units per layer"
     )
-    parser.add_argument("--nlayers", type=int, default=2, help="number of layers")
+    parser.add_argument("--nlayers", type=int, default=1, help="number of layers")
     parser.add_argument("--lr", type=float, default=20, help="initial learning rate")
     parser.add_argument("--clip", type=float, default=0.25, help="gradient clipping")
     parser.add_argument("--epochs", type=int, default=40, help="upper epoch limit")
@@ -55,6 +68,9 @@ def parse_args():
     )
     parser.add_argument(
         "--save", type=str, default="model.pt", help="path to save the final model"
+    )
+    parser.add_argument(
+        "--bidirectional", action="store_true", help="use bidirectional RNN"
     )
     return parser.parse_args()
 
@@ -127,12 +143,17 @@ def train_model_step(corpus, args, model, criterion, epoch, lr):
         # If we didn't, the model would try backpropagating all the way to start of the dataset.
         model.zero_grad()
         hidden = repackage_hidden(hidden)
+
+        hidden = tuple([each.data for each in hidden]) if args.rnn_type == "lstm" else hidden.data
+        # tuple index out of range
+        
         output, hidden = model(data, hidden)
         loss = criterion(output, targets)
         loss.backward()
 
+        params_to_update = [p for p in model.parameters() if p.requires_grad==True]
         # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        torch.nn.utils.clip_grad_norm_(params_to_update, args.clip)
         for p in model.parameters():
             p.data.add_(p.grad, alpha=-lr)
 
@@ -209,7 +230,7 @@ def test_model(corpus, args, model, criterion):  # Load the best saved model.
 
 if __name__ == "__main__":
     args = parse_args()
-    torch.manual_seed(args.seed)
+    make_reproducible(args.seed)
     device = get_device()
     corpus = data.Corpus(args.data)
     eval_batch_size = 10
@@ -217,7 +238,7 @@ if __name__ == "__main__":
     test_data = batchify(corpus.test, eval_batch_size)
 
     ntokens = len(corpus.vocab)
-    model = RNNModel(ntokens, args.emsize, args.nhid, args.nlayers, args.dropout).to(
+    model = RNNModel(ntokens, args.emsize, args.nhid, args.nlayers, args.dropout, args.rnn_type, args.bidirectional).to(
         device
     )
     criterion = nn.NLLLoss()
